@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Jan 21 11:46:35 2021
+
+@author: suresh-bansal
+"""
+import csv
+import sys
+from logging import handlers
+import os
+import logging
+import time
+import pandas as pd
+import requests
+from kaggle.api.kaggle_api_extended import KaggleApi
+
+
+def set_logger()->None:
+    """
+    This function will create and handle logs for the tool
+
+    Returns
+    -------
+    None
+        DESCRIPTION.
+    """
+    log_path = os.path.join(os.path.abspath("."), "Log")
+    if not os.path.exists(log_path):
+        os.mkdir(log_path)
+
+    logger = logging.getLogger(__name__)
+    extra = {'Custom1': 'Project_task', 'Custom2': 'NA'}
+    logger_log_handler = logging.handlers.RotatingFileHandler\
+        (os.path.join(log_path, 'Log_Project_task_' + str(time.strftime\
+        ('%Y%m%d%H%M%S', time.localtime())) + '.txt'), maxBytes=1000000,\
+         backupCount=0)
+    logger.addHandler(logger_log_handler)
+    logger_log_formatter = logging.Formatter(\
+       "%(asctime)s.%(msecs)03d %(Custom1)s!%(module)s!%(funcName)s!%(Custom2)\
+           s!%(message)s", "%Y%m%d-%H%M%S")
+    logger_log_handler.setFormatter(logger_log_formatter)
+    logger = logging.LoggerAdapter(logger, extra)
+    logger.setLevel(logging.INFO)
+    logger.info('Starting Project_task')
+    return logger
+
+def download_from_kaggle(link: 'URL')->'DataFrame':
+    """
+    Parameters
+    ----------
+    link : 'URL to download from kaggle'
+        This function will take kaggle link as input, splits and get the data
+        using kaggle api and returns clean dataframe
+        input example:
+        https://www.kaggle.com/imdevskp/corona-virus-report?select=country_wise_latest.csv
+    Returns
+    -------
+    file : DataFrame
+        Final cleaned kaghle dataset.
+    """
+    logger.info('Creating link for kaggle API')
+    kaggle1 = link.split('/')[3] +'/'+ link.split('/')[4].split('?')[0]
+    kaggle2 = link.split('/')[4].split('?')[1].split('=')[1]
+    api = KaggleApi()
+    try:
+        logger.info('Kaggle API authentication')
+        api.authenticate()
+        logger.info('Downloading kaggle dataset')
+        api.dataset_download_file(kaggle1, kaggle2)
+        logger.info('Converting kaggle dataset to dataframe')
+        file = pd.read_csv(kaggle2)
+        logger.info('Renaming Country/Region as Country')
+        file.rename(columns={'Country/Region':'Country'}, inplace=True)
+        return file
+    except Exception as error:
+        logger.info(error)
+        logger.info('Application exited')
+        sys.exit()
+
+def read_dataset(link: 'URL')->'DataFrame':
+    """
+    Parameters
+    ----------
+    link : 'URL'
+        This function will take API link as input and using Requests library,
+        gets the data and converts in the form of DataFrame using csv module.
+        input example: https://query.data.world/s/6qtjrk6peaxyct5omch54i6n7dskpf
+    Returns
+    -------
+    TYPE: DataFrame
+        Final DataFrame.
+    """
+    logger.info('Getting data from API')
+    with requests.Session() as session:
+        download = session.get(link)
+        decoded_content = download.content.decode('utf-8')
+        logger.info('convert API data to dataframe')
+        data = csv.reader(decoded_content.splitlines(), delimiter=',')
+        my_list = list(data)
+        return pd.DataFrame(my_list[1:], columns=my_list[0])
+
+def dataset_calc(dataframe1: 'DataFrame',\
+                 dataframe2: 'DataFrame')->'DataFrame':
+    """
+    Parameters
+    ----------
+    dataframe1 : 'DataFrame'
+    dataframe2 : 'DataFrame'
+        This function will take two dataframes as input with one column country,
+        common in both and join using the same column.
+        on the new dataframe, 3 new metrics are derived
+
+        Recovered_percentage = recovered/confirmed*100
+        Death_percentage = Deaths/confirmed*100
+        Active_percentage = Active/confirmed*100
+
+    Returns
+    -------
+    TYPE: DataFrame
+        Final DataFrame.
+    """
+    logger.info('Started transformation')
+    logger.info('joining Kaggle and API dataframes')
+    new_df = pd.merge(dataframe1, dataframe2, on='Country', how='outer')
+    logger.info('Creating derived columns')
+    new_df['Recovered_Percent'] = round(new_df['Recovered']/new_df['Confirmed']*100, 2)
+    new_df['Death_Percent'] = round(new_df['Deaths']/new_df['Confirmed']*100, 2)
+    new_df['Active_Percent'] = round(new_df['Active']/new_df['Confirmed']*100, 2)
+    NAME = 'Final_report_'+str(time.strftime\
+    ('%Y%m%d%H%M%S', time.localtime()))+'.csv'
+    logger.info(f'Generating final report csv {NAME}')
+    new_df.to_csv(NAME)
+    print(f'Final report {NAME} is generated. Please check for errors in log file')
+
+if __name__ == "__main__":
+    try:
+        logger = set_logger()
+        KAGGLE_LINK = 'https://www.kaggle.com/imdevskp/corona-virus-report?select=country_wise_latest.csv'
+        API_LINK = 'https://query.data.world/s/6qtjrk6peaxyct5omch54i6n7dskpf'
+        kaggle_df = download_from_kaggle(KAGGLE_LINK)
+        api_df = read_dataset(API_LINK)
+        dataset_calc(kaggle_df, api_df)
+        logger.info('Execution Finished')
+    except Exception as error:
+        logger.info(error)
